@@ -1106,13 +1106,10 @@ ospfs_read(struct file *filp, char __user *buffer, size_t count, loff_t *f_pos)
 
         n = (count - amount) > bytesLeftInBlk ? bytesLeftInBlk : count - amount; 
         
-        if (copy_to_user(buffer, data, n) < 0) {
+        if (copy_to_user(buffer, data, n) != 0) {
             retval = -EFAULT;
             goto done;
         }
-
-        retval = -EIO; // Replace these lines
-        goto done;
 
         buffer += n;
         amount += n;
@@ -1152,11 +1149,16 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
     // use struct file's f_flags field and the O_APPEND bit.
     /* EXERCISE: Your code here */
 
+    if (filp->f_flags & O_APPEND)
+        *f_pos = oi->oi_size;
+
     // If the user is writing past the end of the file, change the file's
     // size to accomodate the request.  (Use change_size().)
     /* EXERCISE: Your code here */
 
-
+    if (count + *f_pos > oi->oi_size) 
+        if (change_size(oi, count + *f_pos) < 0)
+            return -EIO;
 
     // Copy data block by block
     while (amount < count && retval >= 0) {
@@ -1170,14 +1172,22 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
         }
 
         data = ospfs_block(blockno);
+        data += *f_pos % OSPFS_BLKSIZE;
 
         // Figure out how much data is left in this block to write.
         // Copy data from user space. Return -EFAULT if unable to read
         // read user space.
         // Keep track of the number of bytes moved in 'n'.
         /* EXERCISE: Your code here */
-        retval = -EIO; // Replace these lines
-        goto done;
+
+        int bytesLeftInBlk = OSPFS_BLKSIZE - (*f_pos % OSPFS_BLKSIZE);
+
+        n = (count - amount) > bytesLeftInBlk ? bytesLeftInBlk : count - amount; 
+        
+        if (copy_from_user(data, buffer, n) != 0) {
+            retval = -EFAULT;
+            goto done;
+        }
 
         buffer += n;
         amount += n;
@@ -1255,8 +1265,55 @@ create_blank_direntry(ospfs_inode_t *dir_oi)
     //    Use ERR_PTR if this fails; otherwise, clear out all the directory
     //    entries and return one of them.
 
-    /* EXERCISE: Your code here. */
-    return ERR_PTR(-EINVAL); // Replace this line
+    ospfs_direntry_t* emptyEntry = NULL;
+
+    int blkIdx = 0;
+
+    while (blkIdx < OSPFS_MAXFILEBLKS && !emptyEntry) {
+        int blkNum;
+        if (blkIdx <= 9) {
+            blkNum = dir_oi->oi_direct[blkIdx];
+        }
+        else if (blkIdx >= 10 && blkIdx <= 265) { 
+            if (dir_oi->oi_indirect == 0 && add_block(dir_oi) < 0)
+                return ERR_PTR(-EIO);
+
+            uint32_t* indirectDataL1 = ospfs_block(dir_oi->oi_indirect);
+            blkNum = indirectDataL1[blkIdx - 10];
+        }
+        else {
+            if (dir_oi->oi_indirect2 == 0 && add_block(dir_oi) < 0)
+                return ERR_PTR(-EIO);
+            else { 
+                uint32_t* indirectDataL1 = ospfs_block(dir_oi->oi_indirect2);
+                if (indirectDataL1[(blkIdx - 266) / 256] == 0 && add_block(dir_oi) < 0)
+                    return ERR_PTR(-EIO);
+            }
+            uint32_t* indirectDataL1 = ospfs_block(dir_oi->oi_indirect2);
+            uint32_t* indirectDataL2 = ospfs_block(indirectDataL1[(blkIdx - 266) / 256]);
+            blkNum = indirectDataL2[(blkIdx - 266) % 256];
+        }
+
+        ospfs_direntry_t* direntries = ospfs_block(blkNum);
+
+        int i;
+        for (i = 0; i < OSPFS_BLKSIZE / OSPFS_DIRENTRY_SIZE; i++) {
+            if (direntries[i].od_ino == 0) {
+                emptyEntry = &direntries[i];
+                break; 
+            }
+        }
+
+        if (emptyEntry)
+            break; 
+
+        blkIdx++; 
+    }
+
+    if (blkIdx == OSPFS_MAXFILEBLKS)
+        return ERR_PTR(-ENOSPC);
+
+    return emptyEntry;
 }
 
 // ospfs_link(src_dentry, dir, dst_dentry
