@@ -1380,7 +1380,6 @@ ospfs_link(struct dentry *src_dentry, struct inode *dir, struct dentry *dst_dent
 //
 //   EXERCISE: Complete this function.
 
-
 static int
 ospfs_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *nd)
 {
@@ -1390,7 +1389,7 @@ ospfs_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidat
     if (dentry->d_name.len > OSPFS_MAXNAMELEN)
         return -ENAMETOOLONG;
 
-    if (!find_direntry(dir_oi, dentry->d_name.name, dentry->d_name.len))
+    if (find_direntry(dir_oi, dentry->d_name.name, dentry->d_name.len))
         return -EEXIST;
 
     ospfs_direntry_t* dirEntry = create_blank_direntry(dir_oi);
@@ -1398,7 +1397,7 @@ ospfs_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidat
     if (IS_ERR(dirEntry))
         return PTR_ERR(dirEntry);
 
-    ospfs_super_t* super = ospfs_block(2);
+    ospfs_super_t* super = ospfs_block(1);
 
     int i;
     ospfs_inode_t* inodes = ospfs_block(super->os_firstinob);
