@@ -945,7 +945,7 @@ remove_block(ospfs_inode_t *oi)
         }
     }
 
-    oi->oi_size -= 1024;
+    oi->oi_size -= 1024 < oi->oi_size ? 1024 : oi->oi_size;
     return 0;
 }
 
@@ -999,7 +999,6 @@ change_size(ospfs_inode_t *oi, uint32_t new_size)
             }
             return -ENOSPC;
         }
-        return 0;
     }
     while (ospfs_size2nblocks(oi->oi_size) > ospfs_size2nblocks(new_size)) {
         if (remove_block(oi)) {
@@ -1008,10 +1007,9 @@ change_size(ospfs_inode_t *oi, uint32_t new_size)
             }
             return -ENOSPC;
         }
-        return 0;
     }
-
-    return -EIO; // Replace this line
+    oi->oi_size = new_size;
+    return 0;
 }
 
 
@@ -1093,8 +1091,7 @@ ospfs_read(struct file *filp, char __user *buffer, size_t count, loff_t *f_pos)
             goto done;
         }
 
-        data = ospfs_block(blockno);
-        data += *f_pos % OSPFS_BLKSIZE;
+        data = ospfs_inode_data(oi, *f_pos);
 
         // Figure out how much data is left in this block to read.
         // Copy data into user space. Return -EFAULT if unable to write
@@ -1110,6 +1107,12 @@ ospfs_read(struct file *filp, char __user *buffer, size_t count, loff_t *f_pos)
             retval = -EFAULT;
             goto done;
         }
+
+        // printk("n: %d\n", n);
+        // printk("buffer: %d\n", buffer);
+        // printk("bytesLeftInBlk: %d\n", bytesLeftInBlk);
+        // printk("count: %d\n", count);
+        // printk("amount: %d\n", amount);
 
         buffer += n;
         amount += n;
@@ -1149,8 +1152,14 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
     // use struct file's f_flags field and the O_APPEND bit.
     /* EXERCISE: Your code here */
 
+
+    printk("count:%d\n", count);
+
     if (filp->f_flags & O_APPEND)
         *f_pos = oi->oi_size;
+
+    printk("f_pos:%d\n", *f_pos);
+    printk("original oi_size: %d\n", oi->oi_size);
 
     // If the user is writing past the end of the file, change the file's
     // size to accomodate the request.  (Use change_size().)
@@ -1159,6 +1168,8 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
     if (count + *f_pos > oi->oi_size) 
         if (change_size(oi, count + *f_pos) < 0)
             return -EIO;
+
+    // printk("after change size\n");
 
     // Copy data block by block
     while (amount < count && retval >= 0) {
@@ -1171,8 +1182,7 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
             goto done;
         }
 
-        data = ospfs_block(blockno);
-        data += *f_pos % OSPFS_BLKSIZE;
+        data = ospfs_inode_data(oi, *f_pos);
 
         // Figure out how much data is left in this block to write.
         // Copy data from user space. Return -EFAULT if unable to read
