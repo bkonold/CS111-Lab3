@@ -1113,12 +1113,6 @@ ospfs_read(struct file *filp, char __user *buffer, size_t count, loff_t *f_pos)
             goto done;
         }
 
-        // printk("n: %d\n", n);
-        // printk("buffer: %d\n", buffer);
-        // printk("bytesLeftInBlk: %d\n", bytesLeftInBlk);
-        // printk("count: %d\n", count);
-        // printk("amount: %d\n", amount);
-
         buffer += n;
         amount += n;
         *f_pos += n;
@@ -1157,13 +1151,8 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
     // use struct file's f_flags field and the O_APPEND bit.
     /* EXERCISE: Your code here */
 
-
-    //printk("count:%d\n", count);
-
     if (filp->f_flags & O_APPEND)
         *f_pos = oi->oi_size;
-
-    //printk("f_pos:%d\n", *f_pos);
 
     // If the user is writing past the end of the file, change the file's
     // size to accomodate the request.  (Use change_size().)
@@ -1172,8 +1161,6 @@ ospfs_write(struct file *filp, const char __user *buffer, size_t count, loff_t *
     if (count + *f_pos > oi->oi_size) 
         if (change_size(oi, count + *f_pos) < 0)
             return -EIO;
-
-    // printk("after change size\n");
 
     // Copy data block by block
     while (amount < count && retval >= 0) {
@@ -1283,8 +1270,6 @@ create_blank_direntry(ospfs_inode_t *dir_oi)
 
     int blkIdx = 0;
 
-    //printk("size of dir:%d", dir_oi->oi_size);
-
     while (blkIdx < OSPFS_MAXFILEBLKS && !emptyEntry) {
         int blkNum;
         if (blkIdx <= 9) {
@@ -1328,9 +1313,6 @@ create_blank_direntry(ospfs_inode_t *dir_oi)
 
         blkIdx++; 
     }
-
-     //printk("size of dir:%d", dir_oi->oi_size);
-
 
     if (blkIdx == OSPFS_MAXFILEBLKS)
         return ERR_PTR(-ENOSPC);
@@ -1531,10 +1513,27 @@ ospfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
     memcpy(dirEntry->od_name, dentry->d_name.name, dentry->d_name.len);
     dirEntry->od_name[dentry->d_name.len] = '\0';
 
-    strcpy(inodes[i].oi_symlink, symname);
     inodes[i].oi_ftype = OSPFS_FTYPE_SYMLINK;
     inodes[i].oi_size = strlen(symname);
     inodes[i].oi_nlink = 1;
+
+    char* q = strchr(symname, '?');
+    char* c = strchr(symname, ':');
+
+    // conditional symlink
+    if (q && c) {
+        // form string like root?:path1\0path2\0
+        memcpy(&inodes[i].oi_symlink[0], symname, 5);
+        inodes[i].oi_symlink[5] = ':';
+        q++;
+        memcpy(&inodes[i].oi_symlink[6], q, c - q);
+        inodes[i].oi_symlink[6 + c - q] = '\0';
+        c++;
+        memcpy(&inodes[i].oi_symlink[6 + c - q], c, strlen(c));
+        inodes[i].oi_symlink[6 + c - q + 1 + strlen(c)] = '\0';
+    }
+    else
+        strcpy(inodes[i].oi_symlink, symname);
 
     /* Execute this code after your function has successfully created the
        file.  Set entry_ino to the created file's inode number before
@@ -1567,9 +1566,23 @@ ospfs_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
     ospfs_symlink_inode_t *oi =
         (ospfs_symlink_inode_t *) ospfs_inode(dentry->d_inode->i_ino);
-    // Exercise: Your code here.
+    
+    char* q = strchr(oi->oi_symlink, '?');
+    char* c = strchr(oi->oi_symlink, ':');
 
-    nd_set_link(nd, oi->oi_symlink);
+    if (q && c) {
+        // root
+        if (current->uid == 0) {
+            c++;
+            nd_set_link(nd, c);
+        }
+        else {
+            nd_set_link(nd, oi->oi_symlink + strlen(oi->oi_symlink) + 1);
+        }
+    }
+    else
+        nd_set_link(nd, oi->oi_symlink);
+
     return (void *) 0;
 }
 
@@ -1637,6 +1650,6 @@ module_init(init_ospfs_fs)
 module_exit(exit_ospfs_fs)
 
 // Information about the module
-MODULE_AUTHOR("Skeletor");
+MODULE_AUTHOR("Brett Konold and Divakar Bala");
 MODULE_DESCRIPTION("OSPFS");
 MODULE_LICENSE("GPL");
